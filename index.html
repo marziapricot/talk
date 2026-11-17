@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TALK</title>
+<style>
+:root{--bg:#f6f3ee;--card:#fff;--ink:#2b2b3a;--sub:#8a8a99;--main:#5b5fc7;--me:#5b5fc7;--meink:#fff;--other:#e9e7f5;--line:#e3e0ea}
+@media (prefers-color-scheme:dark){:root{--bg:#16161f;--card:#1f1f2b;--ink:#ecebf5;--sub:#8e8ea3;--main:#8b8ff0;--me:#6c70e0;--meink:#fff;--other:#2c2c3d;--line:#30303f}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;display:flex;justify-content:center}
+#app{width:100%;max-width:560px;height:100%;display:flex;flex-direction:column;background:var(--card);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line)}
+header b{font-size:20px;letter-spacing:2px;color:var(--main)}
+header span{font-size:13px;color:var(--sub)}
+.bar{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line)}
+input,button{font:inherit}
+input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);outline:none}
+button{padding:10px 14px;border:0;border-radius:10px;background:var(--main);color:#fff;cursor:pointer}
+button.ghost{background:var(--other);color:var(--ink)}
+button:disabled{opacity:.4;cursor:default}
+#status{padding:8px 16px;font-size:13px;color:var(--sub);min-height:34px}
+#msgs{flex:1;overflow-y:auto;padding:8px 16px;display:flex;flex-direction:column;gap:8px}
+.m{max-width:78%;padding:9px 13px;border-radius:16px;line-height:1.5;word-break:break-word;white-space:pre-wrap}
+.m.me{align-self:flex-end;background:var(--me);color:var(--meink);border-bottom-right-radius:4px}
+.m.you{align-self:flex-start;background:var(--other);border-bottom-left-radius:4px}
+.sys{align-self:center;font-size:12px;color:var(--sub)}
+#send{display:flex;gap:8px;padding:10px 16px;border-top:1px solid var(--line)}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
+#modal.on{display:flex}
+#box{background:var(--card);width:100%;max-width:480px;max-height:80%;border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}
+#list{overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.note{background:var(--bg);border-radius:10px;padding:10px 12px;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.note small{display:block;color:var(--sub);margin-top:4px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header><b>TALK</b><span id="online">連線中…</span></header>
+  <div class="bar">
+    <input id="code" placeholder="密語(選填,輸入相同密語才會配對)" maxlength="30">
+    <button id="go">開始</button>
+  </div>
+  <div class="bar" style="padding-top:0;border:0">
+    <button class="ghost" id="snd">音效:開</button>
+    <button class="ghost" id="lost">尋人啟事</button>
+  </div>
+  <div id="status">按「開始」尋找聊天對象</div>
+  <div id="msgs"></div>
+  <div id="send">
+    <input id="txt" placeholder="輸入訊息…" maxlength="500" disabled>
+    <button id="ok" disabled>送出</button>
+  </div>
+</div>
+
+<div id="modal"><div id="box">
+  <b>尋人啟事</b>
+  <div style="display:flex;gap:8px"><input id="ptxt" placeholder="寫下想找的人…" maxlength="200"><button id="pok">發布</button></div>
+  <div id="list"></div>
+  <button class="ghost" id="close">關閉</button>
+</div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const msgs = $('msgs'), txt = $('txt'), status = $('status'), go = $('go');
+let ws, state = 'idle', sound = true, typingTimer, lastTyping = 0;
+
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+  ws.onmessage = e => handle(JSON.parse(e.data));
+  ws.onclose = () => { $('online').textContent = '已斷線,重新連線中…'; setState('idle'); setTimeout(connect, 2000); };
+}
+const tx = o => ws && ws.readyState === 1 && ws.send(JSON.stringify(o));
+
+function setState(s) {
+  state = s;
+  const chatting = s === 'chat';
+  txt.disabled = $('ok').disabled = !chatting;
+  go.textContent = s === 'idle' ? '開始' : '離開';
+  if (s === 'idle' && !status.textContent.includes('離開')) status.textContent = '按「開始」尋找聊天對象';
+}
+function add(text, cls) {
+  const d = document.createElement('div');
+  d.className = cls; d.textContent = text;
+  msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight;
+}
+function beep() {
+  if (!sound) return;
+  try {
+    const c = new (window.AudioContext || window.webkitAudioContext)();
+    const o = c.createOscillator(), g = c.createGain();
+    o.connect(g); g.connect(c.destination); o.frequency.value = 880; g.gain.value = .08;
+    o.start(); o.stop(c.currentTime + .12);
+  } catch {}
+}
+function handle(m) {
+  if (m.t === 'online') $('online').textContent = '線上 ' + m.n + ' 人';
+  else if (m.t === 'waiting') { setState('wait'); status.textContent = '尋找中…'; }
+  else if (m.t === 'matched') { msgs.innerHTML = ''; setState('chat'); status.textContent = '已配對,開始聊天吧'; txt.focus(); }
+  else if (m.t === 'msg') { add(m.text, 'm you'); beep(); status.textContent = '已配對,開始聊天吧'; }
+  else if (m.t === 'typing') { status.textContent = '對方正在輸入…'; clearTimeout(typingTimer); typingTimer = setTimeout(() => status.textContent = '已配對,開始聊天吧', 2000); }
+  else if (m.t === 'left') { add('對方已離開', 'sys'); setState('idle'); status.textContent = '對方已離開,按「開始」重新配對'; }
+  else if (m.t === 'board') renderBoard(m.list);
+}
+function renderBoard(list) {
+  const el = $('list'); el.innerHTML = '';
+  if (!list.length) { el.textContent = '目前沒有啟事'; return; }
+  list.forEach(n => {
+    const d = document.createElement('div'); d.className = 'note';
+    d.textContent = n.text;
+    const s = document.createElement('small'); s.textContent = new Date(n.time).toLocaleString('zh-TW');
+    d.appendChild(s); el.appendChild(d);
+  });
+}
+function sendMsg() {
+  const t = txt.value.trim();
+  if (!t || state !== 'chat') return;
+  tx({ t: 'msg', text: t }); add(t, 'm me'); txt.value = '';
+}
+
+go.onclick = () => {
+  if (state === 'idle') { msgs.innerHTML = ''; tx({ t: 'find', code: $('code').value }); }
+  else { tx({ t: 'leave' }); if (state === 'chat') add('你已離開', 'sys'); setState('idle'); status.textContent = '你已離開,按「開始」重新配對'; }
+};
+$('ok').onclick = sendMsg;
+txt.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) sendMsg(); };
+txt.oninput = () => { const n = Date.now(); if (n - lastTyping > 1000) { lastTyping = n; tx({ t: 'typing' }); } };
+$('snd').onclick = () => { sound = !sound; $('snd').textContent = '音效:' + (sound ? '開' : '關'); };
+$('lost').onclick = () => $('modal').classList.add('on');
+$('close').onclick = () => $('modal').classList.remove('on');
+$('pok').onclick = () => { const t = $('ptxt').value.trim(); if (t) { tx({ t: 'post', text: t }); $('ptxt').value = ''; } };
+
+connect();
+</script>
+</body>
+</html>
